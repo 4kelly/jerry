@@ -24,10 +24,14 @@ def jerry(tmp_path):
     repo_path = tmp_path / "calbot"
     repo_path.mkdir()
 
-    (tmp_path / "config.json").write_text(json.dumps({
-        "repos": [{"owner": "4kelly", "repo": "calbot", "path": str(repo_path)}],
-        "max_iterations_per_night": 6,
-    }))
+    (tmp_path / "config.json").write_text(
+        json.dumps(
+            {
+                "repos": [{"owner": "4kelly", "repo": "calbot", "path": str(repo_path)}],
+                "max_iterations_per_night": 6,
+            }
+        )
+    )
     return tmp_path
 
 
@@ -64,9 +68,9 @@ def test_research_then_fix_cycle(ctx):
 
     models_used = [c.kwargs["model"] for c in mock_claude.call_args_list]
     # Should alternate: research(opus), fix(sonnet), research(opus), fix(sonnet)...
-    assert models_used[0] == "claude-opus-4-6",  "first call should be research (opus)"
+    assert models_used[0] == "claude-opus-4-6", "first call should be research (opus)"
     assert models_used[1] == "claude-sonnet-4-6", "second call should be fix (sonnet)"
-    assert models_used[2] == "claude-opus-4-6",  "third call should be research (opus)"
+    assert models_used[2] == "claude-opus-4-6", "third call should be research (opus)"
 
     # Research prompt should contain REPO_INFO header
     research_prompt = mock_claude.call_args_list[0].args[0]

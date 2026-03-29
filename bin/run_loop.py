@@ -36,10 +36,14 @@ def get_pct(token: str) -> float:
 
 def run_claude(prompt: str, model: str, log_path: Path) -> int:
     cmd = [
-        "claude", "-p", prompt,
-        "--model", model,
+        "claude",
+        "-p",
+        prompt,
+        "--model",
+        model,
         "--no-color",
-        "--disallowedTools", DISALLOWED,
+        "--disallowedTools",
+        DISALLOWED,
     ]
     result = subprocess.run(cmd, text=True, capture_output=True)
     with log_path.open("a") as f:
@@ -52,13 +56,21 @@ def run_claude(prompt: str, model: str, log_path: Path) -> int:
 def pick_issue(owner: str, repo: str) -> dict | None:
     result = subprocess.run(
         [
-            "gh", "issue", "list",
-            "--repo", f"{owner}/{repo}",
-            "--label", "ai-backlog",
-            "--author", "@me",
-            "--state", "open",
-            "--json", "number,title,body",
-            "--limit", "100",
+            "gh",
+            "issue",
+            "list",
+            "--repo",
+            f"{owner}/{repo}",
+            "--label",
+            "ai-backlog",
+            "--author",
+            "@me",
+            "--state",
+            "open",
+            "--json",
+            "number,title,body",
+            "--limit",
+            "100",
         ],
         text=True,
         capture_output=True,
@@ -95,7 +107,8 @@ def get_token() -> str:
     """Read Bearer token from macOS Keychain or credentials file — never from argv."""
     result = _run(
         ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
-        text=True, capture_output=True,
+        text=True,
+        capture_output=True,
     )
     raw = result.stdout.strip()
     token = ""

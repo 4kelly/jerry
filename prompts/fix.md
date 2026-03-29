@@ -23,4 +23,7 @@ gh pr create \
 git checkout -
 ```
 
-Output: "Opened PR: [url]"
+Output ONLY one line in this format when done (suppress all other analysis/reasoning):
+```
+FIXED: issue_title → github.com/[owner]/[repo]/pull/NUMBER
+```

@@ -7,6 +7,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from subprocess import run as _run
+from typing import Optional
 
 JERRY = Path(__file__).parent.parent
 LOG = JERRY / "run.log"
@@ -34,23 +35,50 @@ def get_pct(token: str) -> float:
     return float(data["seven_day"]["utilization"])
 
 
-def run_claude(prompt: str, model: str, log_path: Path) -> int:
+def run_claude(prompt: str, model: str, log_path: Path, repo_path: str = "") -> int:
     cmd = [
         "claude",
-        "-p",
-        prompt,
+        "--print",
         "--model",
         model,
-        "--no-color",
         "--disallowedTools",
         DISALLOWED,
+        "--allowedTools",
+        "Bash",
     ]
-    result = subprocess.run(cmd, text=True, capture_output=True)
+    if repo_path:
+        cmd.extend(["--add-dir", repo_path])
+    result = subprocess.run(cmd, input=prompt, text=True, capture_output=True)
     with log_path.open("a") as f:
         f.write(result.stdout)
         if result.stderr:
             f.write(result.stderr)
     return result.returncode
+
+
+def count_open_issues(owner: str, repo: str) -> int:
+    result = subprocess.run(
+        [
+            "gh",
+            "issue",
+            "list",
+            "--repo",
+            f"{owner}/{repo}",
+            "--label",
+            "ai-backlog",
+            "--author",
+            "@me",
+            "--state",
+            "open",
+            "--json",
+            "number",
+            "--limit",
+            "100",
+        ],
+        text=True,
+        capture_output=True,
+    )
+    return len(json.loads(result.stdout or "[]"))
 
 
 def pick_issue(owner: str, repo: str) -> dict | None:
@@ -93,14 +121,14 @@ def save_state(state: dict, state_path: Path) -> None:
 def build_research_prompt(repo_info: dict, jerry: Path, log_fn) -> str:
     owner, repo, path = repo_info["owner"], repo_info["repo"], repo_info["path"]
     base = (jerry / "prompts/research.md").read_text()
-    prompt = f"REPO_INFO: owner={owner} repo={repo} path={path}\n\n{base}"
 
+    focus = ""
     extra = Path(path) / "jerry-research.md"
     if extra.exists():
         log_fn(f"Extending with {owner}/{repo}/jerry-research.md")
-        prompt += f"\n\n## Repo-Specific Focus (from {owner}/{repo})\n{extra.read_text()}"
+        focus = extra.read_text()
 
-    return prompt
+    return base.format(owner=owner, repo=repo, path=path, focus=focus)
 
 
 def get_token() -> str:
@@ -135,9 +163,12 @@ def main(
     log_path: Path = LOG,
     get_token_fn=None,
     sleep_fn=time.sleep,
+    count_open_issues_fn=None,
 ) -> None:
     if get_token_fn is None:
         get_token_fn = get_token
+    if count_open_issues_fn is None:
+        count_open_issues_fn = count_open_issues
 
     def _log(msg: str) -> None:
         log(msg, log_path)
@@ -146,19 +177,29 @@ def main(
     config = json.loads((jerry / "config.json").read_text())
     repos = config["repos"]
     max_iter = config.get("max_iterations_per_night", 8)
+    max_open_issues = config.get("max_open_issues", 10)
 
     state = load_state(state_path)
 
     for i in range(max_iter):
+        iter_start = time.time()
         pct = get_pct(token)
-        _log(f"--- Iteration {i + 1} | Usage: {pct:.1f}% ---")
+        _log(f"--- Iteration {i + 1}/{max_iter} | Usage: {pct:.1f}% | Start: {datetime.now().strftime('%H:%M:%S')} ---")
 
         repo_info = repos[state["last_repo_idx"] % len(repos)]
         owner, repo = repo_info["owner"], repo_info["repo"]
 
         if state["mode"] == "research":
+            total_open = sum(count_open_issues_fn(r["owner"], r["repo"]) for r in repos)
+            if total_open >= max_open_issues:
+                _log(f"Issue cap reached ({total_open}/{max_open_issues}), skipping research → fix")
+                state["mode"] = "fix"
+                save_state(state, state_path)
+                continue
+
             _log(f"Research: {owner}/{repo}")
-            run_claude(build_research_prompt(repo_info, jerry, _log), model="claude-opus-4-6", log_path=log_path)
+            rc = run_claude(build_research_prompt(repo_info, jerry, _log), model="claude-opus-4-6", log_path=log_path, repo_path=repo_info["path"])
+            _log(f"Research completed (exit code: {rc})")
             state["mode"] = "fix"
             state["last_repo_idx"] = state["last_repo_idx"] + 1
 
@@ -170,12 +211,15 @@ def main(
                 save_state(state, state_path)
                 continue
 
-            _log(f"Fix: {owner}/{repo}#{issue['number']}")
+            _log(f"Fix: {owner}/{repo}#{issue['number']} - {issue['title']}")
             fix_prompt = (jerry / "prompts/fix.md").read_text()
-            run_claude(f"ISSUE_JSON: {json.dumps(issue)}\n\n{fix_prompt}", model="claude-sonnet-4-6", log_path=log_path)
+            rc = run_claude(f"ISSUE_JSON: {json.dumps(issue)}\n\n{fix_prompt}", model="claude-sonnet-4-6", log_path=log_path, repo_path=repo_info["path"])
+            _log(f"Fix completed (exit code: {rc})")
             state["mode"] = "research"
 
         save_state(state, state_path)
+        iter_duration = time.time() - iter_start
+        _log(f"Iteration {i + 1} completed in {iter_duration:.1f}s | {owner}/{repo} {state['mode']} done")
         sleep_fn(30)
 
     _log("Run loop complete.")

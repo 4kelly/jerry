@@ -47,6 +47,7 @@ def ctx(tmp_path, jerry):
 
 
 def run_main(ctx, **kwargs):
+    kwargs.setdefault("count_open_issues_fn", lambda owner, repo: 0)
     return rl.main(
         jerry=ctx["jerry"],
         state_path=ctx["state"],
@@ -141,6 +142,24 @@ def test_pick_issue_filters_by_author():
     assert "--author" in cmd
     assert "@me" in cmd
     assert result == FAKE_ISSUE
+
+
+def test_skips_research_when_issue_cap_reached(ctx):
+    """When total open issues >= max_open_issues, skip research and go straight to fix."""
+    config = json.loads((ctx["jerry"] / "config.json").read_text())
+    config["max_open_issues"] = 2
+    (ctx["jerry"] / "config.json").write_text(json.dumps(config))
+
+    with (
+        patch.object(rl, "get_pct", return_value=50.0),
+        patch.object(rl, "run_claude", return_value=0) as mock_claude,
+        patch.object(rl, "pick_issue", return_value=FAKE_ISSUE),
+    ):
+        run_main(ctx, count_open_issues_fn=lambda owner, repo: 2)
+
+    models_used = [c.kwargs["model"] for c in mock_claude.call_args_list]
+    assert "claude-opus-4-6" not in models_used, "research should be skipped when at cap"
+    assert "claude-sonnet-4-6" in models_used
 
 
 def test_state_persists_between_iterations(ctx):

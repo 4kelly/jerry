@@ -13,3 +13,6 @@ dist/
 .idea/
 
 *.sqlite3
+
+run.log
+state.json

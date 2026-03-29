@@ -38,13 +38,12 @@ def get_pct(token: str) -> float:
 def run_claude(prompt: str, model: str, log_path: Path, repo_path: str = "") -> int:
     cmd = [
         "claude",
+        "--dangerously-skip-permissions",
         "--print",
         "--model",
         model,
         "--disallowedTools",
-        DISALLOWED,
-        "--allowedTools",
-        "Bash",
+        DISALLOWED
     ]
     if repo_path:
         cmd.extend(["--add-dir", repo_path])

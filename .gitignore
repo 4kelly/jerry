@@ -1,4 +1,14 @@
-state.json
-run.log
-*.pyc
 __pycache__/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+
+# Environments
+.env
+.venv
+
+# JetBrains
+.idea/
+
+*.sqlite3

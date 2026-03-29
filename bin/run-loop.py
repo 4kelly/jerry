@@ -25,21 +25,21 @@ def log(msg: str) -> None:
 
 
 def get_pct(token: str) -> float:
-    req = Request(
-        "https://api.anthropic.com/api/oauth/usage",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "anthropic-beta": "oauth-2025-04-20",
-        },
+    # Use subprocess curl with --config - so token never appears in process args
+    result = subprocess.run(
+        ["curl", "-sf", "--config", "-", "https://api.anthropic.com/api/oauth/usage"],
+        input=f'header = "Authorization: Bearer {token}"\nheader = "anthropic-beta: oauth-2025-04-20"\n',
+        text=True,
+        capture_output=True,
     )
-    with urlopen(req, timeout=10) as resp:
-        data = json.loads(resp.read())
+    data = json.loads(result.stdout)
     return float(data["seven_day"]["utilization"])
 
 
-def run_claude(prompt: str) -> int:
+def run_claude(prompt: str, model: str) -> int:
     cmd = [
         "claude", "-p", prompt,
+        "--model", model,
         "--no-color",
         "--disallowedTools", DISALLOWED,
     ]
@@ -148,7 +148,7 @@ def main() -> None:
 
         if state["mode"] == "research":
             log(f"Research: {owner}/{repo}")
-            run_claude(build_research_prompt(repo_info))
+            run_claude(build_research_prompt(repo_info), model="claude-opus-4-6")
             state["mode"] = "fix"
             state["last_repo_idx"] = state["last_repo_idx"] + 1
 
@@ -162,7 +162,7 @@ def main() -> None:
 
             log(f"Fix: {owner}/{repo}#{issue['number']}")
             fix_prompt = (JERRY / "prompts/fix.md").read_text()
-            run_claude(f"ISSUE_JSON: {json.dumps(issue)}\n\n{fix_prompt}")
+            run_claude(f"ISSUE_JSON: {json.dumps(issue)}\n\n{fix_prompt}", model="claude-sonnet-4-6")
             state["mode"] = "research"
 
         save_state(state)

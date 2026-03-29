@@ -16,11 +16,11 @@ TOKEN=$(echo "$RAW" | jq -r '.claudeAiOauth.accessToken // .accessToken // .acce
   "$HOME/.claude/credentials.json" 2>/dev/null || true)
 [ -z "$TOKEN" ] && { log "ERROR: no credentials"; exit 1; }
 
-USAGE=$(curl -sf \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "anthropic-beta: oauth-2025-04-20" \
-  https://api.anthropic.com/api/oauth/usage) \
-  || { log "ERROR: usage API failed"; exit 1; }
+USAGE=$(curl -sf --config - https://api.anthropic.com/api/oauth/usage <<EOF
+header = "Authorization: Bearer $TOKEN"
+header = "anthropic-beta: oauth-2025-04-20"
+EOF
+) || { log "ERROR: usage API failed"; exit 1; }
 
 PCT=$(echo "$USAGE" | jq -r '.seven_day.utilization')
 RESET_AT=$(echo "$USAGE" | jq -r '.seven_day.resets_at')

@@ -80,7 +80,7 @@ def count_open_issues(owner: str, repo: str) -> int:
     return len(json.loads(result.stdout or "[]"))
 
 
-def pick_issue(owner: str, repo: str) -> dict | None:
+def list_issues(owner: str, repo: str) -> list[dict]:
     result = subprocess.run(
         [
             "gh",
@@ -104,7 +104,7 @@ def pick_issue(owner: str, repo: str) -> dict | None:
     )
     issues = json.loads(result.stdout or "[]")
     issues.sort(key=lambda x: x["number"])
-    return issues[0] if issues else None
+    return issues
 
 
 def load_state(state_path: Path) -> dict:
@@ -115,6 +115,29 @@ def load_state(state_path: Path) -> dict:
 
 def save_state(state: dict, state_path: Path) -> None:
     state_path.write_text(json.dumps(state, indent=2))
+
+
+def has_open_pr(owner: str, repo: str, issue_number: int) -> bool:
+    result = subprocess.run(
+        ["gh", "issue", "view", str(issue_number), "--repo", f"{owner}/{repo}", "--json", "linkedPullRequests"],
+        text=True,
+        capture_output=True,
+    )
+    data = json.loads(result.stdout or "{}")
+    return any(
+        pr.get("state", "").upper() == "OPEN"
+        for pr in data.get("linkedPullRequests", [])
+    )
+
+
+def build_fix_prompt(issue: dict, owner: str, repo: str, jerry: Path) -> str:
+    base = (jerry / "prompts/fix.md").read_text()
+    return base.format(
+        issue_json=json.dumps(issue),
+        owner=owner,
+        repo=repo,
+        number=issue["number"],
+    )
 
 
 def build_research_prompt(repo_info: dict, jerry: Path, log_fn) -> str:
@@ -163,11 +186,14 @@ def main(
     get_token_fn=None,
     sleep_fn=time.sleep,
     count_open_issues_fn=None,
+    has_open_pr_fn=None,
 ) -> None:
     if get_token_fn is None:
         get_token_fn = get_token
     if count_open_issues_fn is None:
         count_open_issues_fn = count_open_issues
+    if has_open_pr_fn is None:
+        has_open_pr_fn = has_open_pr
 
     def _log(msg: str) -> None:
         log(msg, log_path)
@@ -203,16 +229,22 @@ def main(
             state["last_repo_idx"] = state["last_repo_idx"] + 1
 
         else:
-            issue = pick_issue(owner, repo)
+            issue = None
+            for candidate in list_issues(owner, repo):
+                if has_open_pr_fn(owner, repo, candidate["number"]):
+                    _log(f"Skipping #{candidate['number']}: open PR already exists")
+                else:
+                    issue = candidate
+                    break
+
             if not issue:
-                _log(f"No open issues for {owner}/{repo}, switching to research")
+                _log(f"No fixable issues for {owner}/{repo}, switching to research")
                 state["mode"] = "research"
                 save_state(state, state_path)
                 continue
 
             _log(f"Fix: {owner}/{repo}#{issue['number']} - {issue['title']}")
-            fix_prompt = (jerry / "prompts/fix.md").read_text()
-            rc = run_claude(f"ISSUE_JSON: {json.dumps(issue)}\n\n{fix_prompt}", model="claude-sonnet-4-6", log_path=log_path, repo_path=repo_info["path"])
+            rc = run_claude(build_fix_prompt(issue, owner, repo, jerry), model="claude-sonnet-4-6", log_path=log_path, repo_path=repo_info["path"])
             _log(f"Fix completed (exit code: {rc})")
             state["mode"] = "research"
 

@@ -3,24 +3,22 @@
 
 import json
 import subprocess
-import sys
 import time
 from datetime import datetime
 from pathlib import Path
 from subprocess import run as _run
-from urllib.request import Request, urlopen
 
 JERRY = Path(__file__).parent.parent
-LOG = Path.home() / ".claude/jerry/run.log"
-STATE = Path.home() / ".claude/jerry/state.json"
+LOG = JERRY / "run.log"
+STATE = JERRY / "state.json"
 
-DISALLOWED = "Agent,WebFetch,WebSearch,NotebookEdit,Skill,RemoteTrigger"
+DISALLOWED = ""
 
 
-def log(msg: str) -> None:
+def log(msg: str, log_path: Path) -> None:
     line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
     print(line, flush=True)
-    with LOG.open("a") as f:
+    with log_path.open("a") as f:
         f.write(line + "\n")
 
 
@@ -36,7 +34,7 @@ def get_pct(token: str) -> float:
     return float(data["seven_day"]["utilization"])
 
 
-def run_claude(prompt: str, model: str) -> int:
+def run_claude(prompt: str, model: str, log_path: Path) -> int:
     cmd = [
         "claude", "-p", prompt,
         "--model", model,
@@ -44,7 +42,7 @@ def run_claude(prompt: str, model: str) -> int:
         "--disallowedTools", DISALLOWED,
     ]
     result = subprocess.run(cmd, text=True, capture_output=True)
-    with LOG.open("a") as f:
+    with log_path.open("a") as f:
         f.write(result.stdout)
         if result.stderr:
             f.write(result.stderr)
@@ -57,6 +55,7 @@ def pick_issue(owner: str, repo: str) -> dict | None:
             "gh", "issue", "list",
             "--repo", f"{owner}/{repo}",
             "--label", "ai-backlog",
+            "--author", "@me",
             "--state", "open",
             "--json", "number,title,body",
             "--limit", "100",
@@ -69,24 +68,24 @@ def pick_issue(owner: str, repo: str) -> dict | None:
     return issues[0] if issues else None
 
 
-def load_state() -> dict:
-    if STATE.exists():
-        return json.loads(STATE.read_text())
+def load_state(state_path: Path) -> dict:
+    if state_path.exists():
+        return json.loads(state_path.read_text())
     return {"mode": "research", "last_repo_idx": 0}
 
 
-def save_state(state: dict) -> None:
-    STATE.write_text(json.dumps(state, indent=2))
+def save_state(state: dict, state_path: Path) -> None:
+    state_path.write_text(json.dumps(state, indent=2))
 
 
-def build_research_prompt(repo_info: dict) -> str:
+def build_research_prompt(repo_info: dict, jerry: Path, log_fn) -> str:
     owner, repo, path = repo_info["owner"], repo_info["repo"], repo_info["path"]
-    base = (JERRY / "prompts/research.md").read_text()
+    base = (jerry / "prompts/research.md").read_text()
     prompt = f"REPO_INFO: owner={owner} repo={repo} path={path}\n\n{base}"
 
     extra = Path(path) / "jerry-research.md"
     if extra.exists():
-        log(f"Extending with {owner}/{repo}/jerry-research.md")
+        log_fn(f"Extending with {owner}/{repo}/jerry-research.md")
         prompt += f"\n\n## Repo-Specific Focus (from {owner}/{repo})\n{extra.read_text()}"
 
     return prompt
@@ -112,63 +111,61 @@ def get_token() -> str:
         except json.JSONDecodeError:
             token = raw  # raw token string (future format)
     if not token:
-        creds = Path.home() / ".claude/credentials.json"
-        if creds.exists():
-            data = json.loads(creds.read_text())
-            token = (
-                data.get("claudeAiOauth", {}).get("accessToken")
-                or data.get("accessToken")
-                or data.get("access_token", "")
-            )
-    if not token:
         raise RuntimeError("No Claude credentials found")
     return token
 
 
-def main() -> None:
-    token = get_token()
-    config = json.loads((JERRY / "config.json").read_text())
+def main(
+    *,
+    jerry: Path = JERRY,
+    state_path: Path = STATE,
+    log_path: Path = LOG,
+    get_token_fn=None,
+    sleep_fn=time.sleep,
+) -> None:
+    if get_token_fn is None:
+        get_token_fn = get_token
+
+    def _log(msg: str) -> None:
+        log(msg, log_path)
+
+    token = get_token_fn()
+    config = json.loads((jerry / "config.json").read_text())
     repos = config["repos"]
-    stop_threshold = config.get("stop_threshold_pct", 92)
     max_iter = config.get("max_iterations_per_night", 8)
 
-    STATE.parent.mkdir(parents=True, exist_ok=True)
-    state = load_state()
+    state = load_state(state_path)
 
     for i in range(max_iter):
         pct = get_pct(token)
-        log(f"--- Iteration {i + 1} | Usage: {pct:.1f}% ---")
-
-        if pct >= stop_threshold:
-            log(f"Usage at threshold ({stop_threshold}%), stopping")
-            break
+        _log(f"--- Iteration {i + 1} | Usage: {pct:.1f}% ---")
 
         repo_info = repos[state["last_repo_idx"] % len(repos)]
         owner, repo = repo_info["owner"], repo_info["repo"]
 
         if state["mode"] == "research":
-            log(f"Research: {owner}/{repo}")
-            run_claude(build_research_prompt(repo_info), model="claude-opus-4-6")
+            _log(f"Research: {owner}/{repo}")
+            run_claude(build_research_prompt(repo_info, jerry, _log), model="claude-opus-4-6", log_path=log_path)
             state["mode"] = "fix"
             state["last_repo_idx"] = state["last_repo_idx"] + 1
 
         else:
             issue = pick_issue(owner, repo)
             if not issue:
-                log(f"No open issues for {owner}/{repo}, switching to research")
+                _log(f"No open issues for {owner}/{repo}, switching to research")
                 state["mode"] = "research"
-                save_state(state)
+                save_state(state, state_path)
                 continue
 
-            log(f"Fix: {owner}/{repo}#{issue['number']}")
-            fix_prompt = (JERRY / "prompts/fix.md").read_text()
-            run_claude(f"ISSUE_JSON: {json.dumps(issue)}\n\n{fix_prompt}", model="claude-sonnet-4-6")
+            _log(f"Fix: {owner}/{repo}#{issue['number']}")
+            fix_prompt = (jerry / "prompts/fix.md").read_text()
+            run_claude(f"ISSUE_JSON: {json.dumps(issue)}\n\n{fix_prompt}", model="claude-sonnet-4-6", log_path=log_path)
             state["mode"] = "research"
 
-        save_state(state)
-        time.sleep(30)
+        save_state(state, state_path)
+        sleep_fn(30)
 
-    log("Run loop complete.")
+    _log("Run loop complete.")
 
 
 if __name__ == "__main__":

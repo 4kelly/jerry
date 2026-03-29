@@ -3,6 +3,5 @@
     { "owner": "4kelly", "repo": "calbot", "path": "/Users/rk/github/calbot" },
     { "owner": "4kelly", "repo": "jerry",  "path": "/Users/rk/github/jerry" }
   ],
-  "stop_threshold_pct": 92,
-  "max_iterations_per_night": 8
+"max_iterations_per_night": 8
 }

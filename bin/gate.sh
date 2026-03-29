@@ -30,9 +30,8 @@ HOURS_LEFT=$(( (RESET_EPOCH - $(date +%s)) / 3600 ))
 
 log "Week: ${PCT}%  |  Reset in ${HOURS_LEFT}h"
 
-STOP_THRESHOLD=$(jq -r '.stop_threshold_pct // 92' "$JERRY/config.json")
-(( $(echo "$PCT >= $STOP_THRESHOLD" | bc -l) )) && { log "SKIP: at threshold (${PCT}%)"; exit 0; }
+(( $(echo "$PCT >= 100" | bc -l) )) && { log "SKIP: usage at 100%"; exit 0; }
 [ "$HOURS_LEFT" -ge 24 ] && { log "SKIP: ${HOURS_LEFT}h to reset"; exit 0; }
 
 log "Gate PASSED — starting run loop"
-exec python3 "$JERRY/bin/run-loop.py"
+exec python3 "$JERRY/bin/run_loop.py"

@@ -1,0 +1,40 @@
+[project]
+name = "jerry"
+version = "0.1.0"
+description = "Jerry AI coding agent pipeline"
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.15.8",
+    "ty>=0.0.26",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+
+[tool.ruff.lint]
+ignore = [
+    "D100", # Missing module docstring
+    "D101", # Missing docstring in public class
+    "D102", # Missing docstring in public method
+    "D103", # Missing docstring in public function
+    "D104", # Missing docstring in public package
+    "D105", # Missing docstring in magic method
+    "D106", # Missing docstring in public nested class
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ty.src]
+exclude = [
+    "**/test_*.py",
+    "**/tests/**",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
